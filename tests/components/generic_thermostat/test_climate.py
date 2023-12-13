@@ -455,81 +455,147 @@ async def test_sensor_unavailable(hass: HomeAssistant) -> None:
     assert state.attributes.get("current_temperature") is None
 
 
-async def test_set_target_temp_heater_on(hass: HomeAssistant, setup_comp_2) -> None:
-    """Test if target temperature turn heater on."""
-    calls = _setup_switch(hass, False)
-    _setup_sensor(hass, 25)
-    await hass.async_block_till_done()
-    await common.async_set_temperature(hass, 30)
-    assert len(calls) == 1
-    call = calls[0]
-    assert call.domain == HASS_DOMAIN
-    assert call.service == SERVICE_TURN_ON
-    assert call.data["entity_id"] == ENT_SWITCH
-
-
-async def test_set_target_temp_heater_off(hass: HomeAssistant, setup_comp_2) -> None:
-    """Test if target temperature turn heater off."""
-    calls = _setup_switch(hass, True)
-    _setup_sensor(hass, 30)
-    await hass.async_block_till_done()
-    await common.async_set_temperature(hass, 25)
-    assert len(calls) == 2
-    call = calls[0]
-    assert call.domain == HASS_DOMAIN
-    assert call.service == SERVICE_TURN_OFF
-    assert call.data["entity_id"] == ENT_SWITCH
-
-
-async def test_temp_change_heater_on_within_tolerance(
-    hass: HomeAssistant, setup_comp_2
+async def _setup_basic_thermostat(
+    hass: HomeAssistant,
+    ac_mode: bool,
+    initial_hvac_mode: HVACMode,
+    cold_tolerance: float,
+    hot_tolerance: float,
 ) -> None:
-    """Test if temperature change doesn't turn on within tolerance."""
-    calls = _setup_switch(hass, False)
-    await common.async_set_temperature(hass, 30)
-    _setup_sensor(hass, 29)
+    """Initialize thermostat with most basic config."""
+    hass.config.units = METRIC_SYSTEM
+    assert await async_setup_component(
+        hass,
+        DOMAIN,
+        {
+            "climate": {
+                "platform": "generic_thermostat",
+                "name": "test",
+                "cold_tolerance": cold_tolerance,
+                "hot_tolerance": hot_tolerance,
+                "heater": ENT_SWITCH,
+                "target_sensor": ENT_SENSOR,
+                "ac_mode": ac_mode,
+                "initial_hvac_mode": initial_hvac_mode,
+            }
+        },
+    )
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    (
+        "ac_mode",
+        "initial_hvac_mode",
+        "initial_switch_state",
+        "sensor_temperature",
+        "target_temperature",
+        "number_of_calls_triggered",
+        "triggered_service_call",
+    ),
+    [
+        (False, HVACMode.HEAT, False, 25, 30, 1, SERVICE_TURN_ON),
+        (False, HVACMode.HEAT, True, 30, 25, 2, SERVICE_TURN_OFF),
+        (True, HVACMode.COOL, False, 30, 25, 1, SERVICE_TURN_ON),
+        (True, HVACMode.COOL, True, 25, 30, 2, SERVICE_TURN_OFF),
+    ],
+)
+async def test_setting_target_temperature_toggles_heating_cooling_switch(
+    hass: HomeAssistant,
+    ac_mode: bool,
+    initial_hvac_mode: HVACMode,
+    initial_switch_state: bool,
+    sensor_temperature: float,
+    target_temperature: float,
+    number_of_calls_triggered: int,
+    triggered_service_call: str,
+) -> None:
+    """Test that setting a target temperature toggles the heating/cooling switch."""
+    await _setup_basic_thermostat(
+        hass, ac_mode, initial_hvac_mode, cold_tolerance=0, hot_tolerance=0
+    )
+    calls = _setup_switch(hass, initial_switch_state)
+    _setup_sensor(hass, sensor_temperature)
+    await hass.async_block_till_done()
+    await common.async_set_temperature(hass, target_temperature)
+    assert len(calls) == number_of_calls_triggered
+    call = calls[0]
+    assert call.domain == HASS_DOMAIN
+    assert call.service == triggered_service_call
+    assert call.data["entity_id"] == ENT_SWITCH
+
+
+@pytest.mark.parametrize(
+    (
+        "ac_mode",
+        "initial_hvac_mode",
+        "initial_switch_state",
+        "sensor_temperature",
+        "target_temperature",
+    ),
+    [
+        (False, HVACMode.HEAT, False, 29, 30),
+        (False, HVACMode.HEAT, True, 33, 30),
+        (True, HVACMode.COOL, True, 29.8, 30),
+        (True, HVACMode.COOL, False, 25.2, 25),
+    ],
+)
+async def test_setting_target_temperature_within_tolerance_does_not_toggle_heating_cooling_switch(
+    hass: HomeAssistant,
+    ac_mode: bool,
+    initial_hvac_mode: HVACMode,
+    initial_switch_state: bool,
+    sensor_temperature: float,
+    target_temperature: float,
+) -> None:
+    """Test that setting a target temperature does not toggle the heating/cooling switch when current temperature is within the defined tolerance."""
+    await _setup_basic_thermostat(
+        hass, ac_mode, initial_hvac_mode, cold_tolerance=2, hot_tolerance=4
+    )
+    calls = _setup_switch(hass, initial_switch_state)
+    await common.async_set_temperature(hass, target_temperature)
+    _setup_sensor(hass, sensor_temperature)
     await hass.async_block_till_done()
     assert len(calls) == 0
 
 
-async def test_temp_change_heater_on_outside_tolerance(
-    hass: HomeAssistant, setup_comp_2
+@pytest.mark.parametrize(
+    (
+        "ac_mode",
+        "initial_hvac_mode",
+        "initial_switch_state",
+        "sensor_temperature",
+        "target_temperature",
+        "triggered_service_call",
+    ),
+    [
+        (False, HVACMode.HEAT, False, 27, 30, SERVICE_TURN_ON),
+        (False, HVACMode.HEAT, True, 35, 30, SERVICE_TURN_OFF),
+        (True, HVACMode.COOL, False, 30, 25, SERVICE_TURN_ON),
+        (True, HVACMode.COOL, True, 27, 30, SERVICE_TURN_OFF),
+    ],
+)
+async def test_setting_target_temperature_outside_tolerance_toggles_heating_cooling_switch(
+    hass: HomeAssistant,
+    ac_mode: bool,
+    initial_hvac_mode: HVACMode,
+    initial_switch_state: bool,
+    sensor_temperature: float,
+    target_temperature: float,
+    triggered_service_call: str,
 ) -> None:
-    """Test if temperature change turn heater on outside cold tolerance."""
-    calls = _setup_switch(hass, False)
-    await common.async_set_temperature(hass, 30)
-    _setup_sensor(hass, 27)
+    """Test that setting a target temperature toggles the heating/cooling switch when current temperature is outside the defined tolerance."""
+    await _setup_basic_thermostat(
+        hass, ac_mode, initial_hvac_mode, cold_tolerance=2, hot_tolerance=4
+    )
+    calls = _setup_switch(hass, initial_switch_state)
+    await common.async_set_temperature(hass, target_temperature)
+    _setup_sensor(hass, sensor_temperature)
     await hass.async_block_till_done()
     assert len(calls) == 1
     call = calls[0]
     assert call.domain == HASS_DOMAIN
-    assert call.service == SERVICE_TURN_ON
-    assert call.data["entity_id"] == ENT_SWITCH
-
-
-async def test_temp_change_heater_off_within_tolerance(
-    hass: HomeAssistant, setup_comp_2
-) -> None:
-    """Test if temperature change doesn't turn off within tolerance."""
-    calls = _setup_switch(hass, True)
-    await common.async_set_temperature(hass, 30)
-    _setup_sensor(hass, 33)
-    await hass.async_block_till_done()
-    assert len(calls) == 0
-
-
-async def test_temp_change_heater_off_outside_tolerance(
-    hass: HomeAssistant, setup_comp_2
-) -> None:
-    """Test if temperature change turn heater off outside hot tolerance."""
-    calls = _setup_switch(hass, True)
-    await common.async_set_temperature(hass, 30)
-    _setup_sensor(hass, 35)
-    await hass.async_block_till_done()
-    assert len(calls) == 1
-    call = calls[0]
-    assert call.domain == HASS_DOMAIN
-    assert call.service == SERVICE_TURN_OFF
+    assert call.service == triggered_service_call
     assert call.data["entity_id"] == ENT_SWITCH
 
 
@@ -615,19 +681,6 @@ async def setup_comp_3(hass):
     await hass.async_block_till_done()
 
 
-async def test_set_target_temp_ac_off(hass: HomeAssistant, setup_comp_3) -> None:
-    """Test if target temperature turn ac off."""
-    calls = _setup_switch(hass, True)
-    _setup_sensor(hass, 25)
-    await hass.async_block_till_done()
-    await common.async_set_temperature(hass, 30)
-    assert len(calls) == 2
-    call = calls[0]
-    assert call.domain == HASS_DOMAIN
-    assert call.service == SERVICE_TURN_OFF
-    assert call.data["entity_id"] == ENT_SWITCH
-
-
 async def test_turn_away_mode_on_cooling(hass: HomeAssistant, setup_comp_3) -> None:
     """Test the setting away mode when cooling."""
     _setup_switch(hass, True)
@@ -663,58 +716,6 @@ async def test_set_target_temp_ac_on(hass: HomeAssistant, setup_comp_3) -> None:
     _setup_sensor(hass, 30)
     await hass.async_block_till_done()
     await common.async_set_temperature(hass, 25)
-    assert len(calls) == 1
-    call = calls[0]
-    assert call.domain == HASS_DOMAIN
-    assert call.service == SERVICE_TURN_ON
-    assert call.data["entity_id"] == ENT_SWITCH
-
-
-async def test_temp_change_ac_off_within_tolerance(
-    hass: HomeAssistant, setup_comp_3
-) -> None:
-    """Test if temperature change doesn't turn ac off within tolerance."""
-    calls = _setup_switch(hass, True)
-    await common.async_set_temperature(hass, 30)
-    _setup_sensor(hass, 29.8)
-    await hass.async_block_till_done()
-    assert len(calls) == 0
-
-
-async def test_set_temp_change_ac_off_outside_tolerance(
-    hass: HomeAssistant, setup_comp_3
-) -> None:
-    """Test if temperature change turn ac off."""
-    calls = _setup_switch(hass, True)
-    await common.async_set_temperature(hass, 30)
-    _setup_sensor(hass, 27)
-    await hass.async_block_till_done()
-    assert len(calls) == 1
-    call = calls[0]
-    assert call.domain == HASS_DOMAIN
-    assert call.service == SERVICE_TURN_OFF
-    assert call.data["entity_id"] == ENT_SWITCH
-
-
-async def test_temp_change_ac_on_within_tolerance(
-    hass: HomeAssistant, setup_comp_3
-) -> None:
-    """Test if temperature change doesn't turn ac on within tolerance."""
-    calls = _setup_switch(hass, False)
-    await common.async_set_temperature(hass, 25)
-    _setup_sensor(hass, 25.2)
-    await hass.async_block_till_done()
-    assert len(calls) == 0
-
-
-async def test_temp_change_ac_on_outside_tolerance(
-    hass: HomeAssistant, setup_comp_3
-) -> None:
-    """Test if temperature change turn ac on."""
-    calls = _setup_switch(hass, False)
-    await common.async_set_temperature(hass, 25)
-    _setup_sensor(hass, 30)
-    await hass.async_block_till_done()
     assert len(calls) == 1
     call = calls[0]
     assert call.domain == HASS_DOMAIN

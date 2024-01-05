@@ -490,8 +490,8 @@ async def _setup_basic_thermostat(
         "initial_switch_state",
         "sensor_temperature",
         "target_temperature",
-        "number_of_calls_triggered",
-        "triggered_service_call",
+        "expected_number_of_calls_triggered",
+        "expected_triggered_service_call",
     ),
     [
         (False, HVACMode.HEAT, False, 25, 30, 1, SERVICE_TURN_ON),
@@ -507,21 +507,26 @@ async def test_setting_target_temperature_toggles_heating_cooling_switch(
     initial_switch_state: bool,
     sensor_temperature: float,
     target_temperature: float,
-    number_of_calls_triggered: int,
-    triggered_service_call: str,
+    expected_number_of_calls_triggered: int,
+    expected_triggered_service_call: str,
 ) -> None:
     """Test that setting a target temperature toggles the heating/cooling switch."""
+    # Given
     await _setup_basic_thermostat(
         hass, ac_mode, initial_hvac_mode, cold_tolerance=0, hot_tolerance=0
     )
     calls = _setup_switch(hass, initial_switch_state)
     _setup_sensor(hass, sensor_temperature)
     await hass.async_block_till_done()
+
+    # When
     await common.async_set_temperature(hass, target_temperature)
-    assert len(calls) == number_of_calls_triggered
+
+    # Then
+    assert len(calls) == expected_number_of_calls_triggered
     call = calls[0]
     assert call.domain == HASS_DOMAIN
-    assert call.service == triggered_service_call
+    assert call.service == expected_triggered_service_call
     assert call.data["entity_id"] == ENT_SWITCH
 
 
@@ -549,13 +554,18 @@ async def test_setting_target_temperature_within_tolerance_does_not_toggle_heati
     target_temperature: float,
 ) -> None:
     """Test that setting a target temperature does not toggle the heating/cooling switch when current temperature is within the defined tolerance."""
+    # Given
     await _setup_basic_thermostat(
         hass, ac_mode, initial_hvac_mode, cold_tolerance=2, hot_tolerance=4
     )
     calls = _setup_switch(hass, initial_switch_state)
-    await common.async_set_temperature(hass, target_temperature)
     _setup_sensor(hass, sensor_temperature)
+
+    # When
+    await common.async_set_temperature(hass, target_temperature)
     await hass.async_block_till_done()
+
+    # Then
     assert len(calls) == 0
 
 
@@ -566,7 +576,7 @@ async def test_setting_target_temperature_within_tolerance_does_not_toggle_heati
         "initial_switch_state",
         "sensor_temperature",
         "target_temperature",
-        "triggered_service_call",
+        "expected_triggered_service_call",
     ),
     [
         (False, HVACMode.HEAT, False, 27, 30, SERVICE_TURN_ON),
@@ -582,20 +592,25 @@ async def test_setting_target_temperature_outside_tolerance_toggles_heating_cool
     initial_switch_state: bool,
     sensor_temperature: float,
     target_temperature: float,
-    triggered_service_call: str,
+    expected_triggered_service_call: str,
 ) -> None:
     """Test that setting a target temperature toggles the heating/cooling switch when current temperature is outside the defined tolerance."""
+    # Given
     await _setup_basic_thermostat(
         hass, ac_mode, initial_hvac_mode, cold_tolerance=2, hot_tolerance=4
     )
     calls = _setup_switch(hass, initial_switch_state)
-    await common.async_set_temperature(hass, target_temperature)
     _setup_sensor(hass, sensor_temperature)
+
+    # When
+    await common.async_set_temperature(hass, target_temperature)
     await hass.async_block_till_done()
+
+    # Then
     assert len(calls) == 1
     call = calls[0]
     assert call.domain == HASS_DOMAIN
-    assert call.service == triggered_service_call
+    assert call.service == expected_triggered_service_call
     assert call.data["entity_id"] == ENT_SWITCH
 
 

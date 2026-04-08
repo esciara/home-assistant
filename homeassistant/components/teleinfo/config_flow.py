@@ -85,6 +85,32 @@ class TeleinfoConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reconfiguration of the serial port."""
+        errors: dict[str, str] = {}
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            errors, _decoded_data = await self._validate_serial_port(
+                user_input[CONF_SERIAL_PORT]
+            )
+            if not errors:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates=user_input,
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                data_schema=STEP_USER_DATA_SCHEMA,
+                suggested_values=user_input or dict(entry.data),
+            ),
+            errors=errors,
+        )
+
     async def async_step_usb(self, discovery_info: UsbServiceInfo) -> ConfigFlowResult:
         """Handle USB discovery."""
         # Resolve stable /dev/serial/by-id/ path

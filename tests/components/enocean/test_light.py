@@ -196,16 +196,3 @@ async def test_ignored_telegrams(
     await async_receive_packet(hass, mock_gateway, erp1_packet(rorg, data, sender))
 
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
-
-
-@pytest.mark.usefixtures("init_integration")
-async def test_light_without_id_is_not_created(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Test a light needs the address of its dimmer."""
-    await async_setup_yaml_platform(
-        hass, Platform.LIGHT, {"sender_id": SENDER_ID, "name": "First"}
-    )
-
-    assert "Light First is not created" in caplog.text
-    assert hass.states.async_entity_ids(LIGHT_DOMAIN) == []

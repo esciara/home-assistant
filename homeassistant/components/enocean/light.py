@@ -25,7 +25,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util.color import brightness_to_value, value_to_brightness
 
-from .const import LOGGER
 from .entity import EnOceanEntity, combine_hex
 from .helpers import (
     EnOceanDevice,
@@ -44,8 +43,8 @@ BRIGHTNESS_SCALE = (1, 100)
 
 PLATFORM_SCHEMA = LIGHT_PLATFORM_SCHEMA.extend(
     {
-        vol.Optional(CONF_ID, default=[]): vol.All(
-            cv.ensure_list, [vol.Coerce(int)], vol.Any([], validate_device_id)
+        vol.Required(CONF_ID): vol.All(
+            cv.ensure_list, [vol.Coerce(int)], validate_device_id
         ),
         vol.Required(CONF_SENDER_ID): vol.All(
             cv.ensure_list, [vol.Coerce(int)], validate_sender_id
@@ -62,25 +61,15 @@ async def async_setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the EnOcean light platform."""
-    sender_id: list[int] = config[CONF_SENDER_ID]
     dev_name: str = config[CONF_NAME]
-    dev_id: list[int] = config[CONF_ID]
-
-    if not dev_id:
-        LOGGER.warning(
-            "Light %s is not created: the address of the dimmer (id) is required",
-            dev_name,
-        )
-        return
-
-    address = EURID(dev_id)
+    address = EURID(config[CONF_ID])
     async_add_device(
         hass,
         EnOceanDevice(
             address=address,
             device_type=DEVICE_TYPES[DEVICE_TYPE_ID],
             name=dev_name,
-            sender=sender_address(sender_id),
+            sender=sender_address(config[CONF_SENDER_ID]),
         ),
     )
     async_add_entities([EnOceanLight(address, dev_name)])

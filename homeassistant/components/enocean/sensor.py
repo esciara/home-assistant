@@ -2,9 +2,9 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import override
+from typing import Any, override
 
-from enocean_async import EEP, EEP_SPECIFICATIONS, EEPHandler, EEPMessage, ERP1Telegram
+from enocean_async import DEVICE_TYPES, EURID, DeviceType, Observable, Observation
 import voluptuous as vol
 
 from homeassistant.components.sensor import (
@@ -24,12 +24,14 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType, StateType
 
+from .const import LOGGER
 from .entity import EnOceanEntity, combine_hex
+from .helpers import EnOceanDevice, async_add_device, validate_device_id
 
 CONF_MAX_TEMP = "max_temp"
 CONF_MIN_TEMP = "min_temp"
@@ -43,12 +45,69 @@ SENSOR_TYPE_POWER = "powersensor"
 SENSOR_TYPE_TEMPERATURE = "temperature"
 SENSOR_TYPE_WINDOWHANDLE = "windowhandle"
 
+# Temperature scale of the 8 bit A5-02 profiles, all reported over raw values 255..0
+A5_02_DEVICE_TYPE_IDS = {
+    (-40, 0): "EEP/A5-02-01",
+    (-30, 10): "EEP/A5-02-02",
+    (-20, 20): "EEP/A5-02-03",
+    (-10, 30): "EEP/A5-02-04",
+    (0, 40): "EEP/A5-02-05",
+    (10, 50): "EEP/A5-02-06",
+    (20, 60): "EEP/A5-02-07",
+    (30, 70): "EEP/A5-02-08",
+    (40, 80): "EEP/A5-02-09",
+    (50, 90): "EEP/A5-02-0A",
+    (60, 100): "EEP/A5-02-0B",
+    (-60, 20): "EEP/A5-02-10",
+    (-50, 30): "EEP/A5-02-11",
+    (-40, 40): "EEP/A5-02-12",
+    (-30, 50): "EEP/A5-02-13",
+    (-20, 60): "EEP/A5-02-14",
+    (-10, 70): "EEP/A5-02-15",
+    (0, 80): "EEP/A5-02-16",
+    (10, 90): "EEP/A5-02-17",
+    (20, 100): "EEP/A5-02-18",
+    (30, 110): "EEP/A5-02-19",
+    (40, 120): "EEP/A5-02-1A",
+    (50, 130): "EEP/A5-02-1B",
+}
+# Temperature scale of the A5-04 profiles, reported over raw values 0..250
+A5_04_DEVICE_TYPE_IDS = {(0, 40): "EEP/A5-04-01", (-20, 60): "EEP/A5-04-02"}
+DEFAULT_TEMPERATURE_DEVICE_TYPE_ID = "EEP/A5-02-05"
+
+WINDOW_STATES = {"closed": STATE_CLOSED, "open": STATE_OPEN, "tilted": "tilt"}
+
+
+def _temperature_device_type(config: ConfigType) -> DeviceType:
+    """Return the profile whose temperature scale matches the configuration."""
+    scale = (config[CONF_MIN_TEMP], config[CONF_MAX_TEMP])
+    raw_range = (config[CONF_RANGE_FROM], config[CONF_RANGE_TO])
+    device_type_id = None
+    if raw_range == (255, 0):
+        device_type_id = A5_02_DEVICE_TYPE_IDS.get(scale)
+    elif raw_range == (0, 250):
+        device_type_id = A5_04_DEVICE_TYPE_IDS.get(scale)
+    if device_type_id is None:
+        LOGGER.warning(
+            "Temperature range %s..%s over raw values %s..%s of %s matches no"
+            " known profile; decoding as %s",
+            *scale,
+            *raw_range,
+            config[CONF_NAME],
+            DEFAULT_TEMPERATURE_DEVICE_TYPE_ID,
+        )
+        device_type_id = DEFAULT_TEMPERATURE_DEVICE_TYPE_ID
+    return DEVICE_TYPES[device_type_id]
+
 
 @dataclass(frozen=True, kw_only=True)
 class EnOceanSensorEntityDescription(SensorEntityDescription):
     """Describes EnOcean sensor entity."""
 
-    unique_id: Callable[[list[int]], str | None]
+    device_entity: str
+    observable: Observable
+    device_type_fn: Callable[[ConfigType], DeviceType]
+    value_fn: Callable[[Any], StateType] = lambda value: value
 
 
 SENSOR_DESC_TEMPERATURE = EnOceanSensorEntityDescription(
@@ -57,7 +116,9 @@ SENSOR_DESC_TEMPERATURE = EnOceanSensorEntityDescription(
     native_unit_of_measurement=UnitOfTemperature.CELSIUS,
     device_class=SensorDeviceClass.TEMPERATURE,
     state_class=SensorStateClass.MEASUREMENT,
-    unique_id=lambda dev_id: f"{combine_hex(dev_id)}-{SENSOR_TYPE_TEMPERATURE}",
+    device_entity="temperature",
+    observable=Observable.TEMPERATURE,
+    device_type_fn=_temperature_device_type,
 )
 
 SENSOR_DESC_HUMIDITY = EnOceanSensorEntityDescription(
@@ -66,7 +127,9 @@ SENSOR_DESC_HUMIDITY = EnOceanSensorEntityDescription(
     native_unit_of_measurement=PERCENTAGE,
     device_class=SensorDeviceClass.HUMIDITY,
     state_class=SensorStateClass.MEASUREMENT,
-    unique_id=lambda dev_id: f"{combine_hex(dev_id)}-{SENSOR_TYPE_HUMIDITY}",
+    device_entity="humidity",
+    observable=Observable.HUMIDITY,
+    device_type_fn=lambda config: DEVICE_TYPES["EEP/A5-04-01"],
 )
 
 SENSOR_DESC_POWER = EnOceanSensorEntityDescription(
@@ -75,20 +138,36 @@ SENSOR_DESC_POWER = EnOceanSensorEntityDescription(
     native_unit_of_measurement=UnitOfPower.WATT,
     device_class=SensorDeviceClass.POWER,
     state_class=SensorStateClass.MEASUREMENT,
-    unique_id=lambda dev_id: f"{combine_hex(dev_id)}-{SENSOR_TYPE_POWER}",
+    device_entity="power",
+    observable=Observable.POWER,
+    device_type_fn=lambda config: DEVICE_TYPES["EEP/A5-12-01"],
 )
 
 SENSOR_DESC_WINDOWHANDLE = EnOceanSensorEntityDescription(
     key=SENSOR_TYPE_WINDOWHANDLE,
     name="WindowHandle",
     translation_key="window_handle",
-    unique_id=lambda dev_id: f"{combine_hex(dev_id)}-{SENSOR_TYPE_WINDOWHANDLE}",
+    device_entity="window_state",
+    observable=Observable.WINDOW_STATE,
+    device_type_fn=lambda config: DEVICE_TYPES["EEP/F6-10-00"],
+    value_fn=lambda value: WINDOW_STATES[value],
 )
 
+SENSOR_DESCRIPTIONS = {
+    description.key: description
+    for description in (
+        SENSOR_DESC_TEMPERATURE,
+        SENSOR_DESC_HUMIDITY,
+        SENSOR_DESC_POWER,
+        SENSOR_DESC_WINDOWHANDLE,
+    )
+}
 
 PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
     {
-        vol.Required(CONF_ID): vol.All(cv.ensure_list, [vol.Coerce(int)]),
+        vol.Required(CONF_ID): vol.All(
+            cv.ensure_list, [vol.Coerce(int)], validate_device_id
+        ),
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
         vol.Optional(CONF_DEVICE_CLASS, default=SENSOR_TYPE_POWER): cv.string,
         vol.Optional(CONF_MAX_TEMP, default=40): vol.Coerce(int),
@@ -99,10 +178,10 @@ PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
 )
 
 
-def setup_platform(
+async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
-    add_entities: AddEntitiesCallback,
+    async_add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up an EnOcean sensor device."""
@@ -110,178 +189,54 @@ def setup_platform(
     dev_name: str = config[CONF_NAME]
     sensor_type: str = config[CONF_DEVICE_CLASS]
 
-    entities: list[EnOceanSensor] = []
-    if sensor_type == SENSOR_TYPE_TEMPERATURE:
-        temp_min: int = config[CONF_MIN_TEMP]
-        temp_max: int = config[CONF_MAX_TEMP]
-        range_from: int = config[CONF_RANGE_FROM]
-        range_to: int = config[CONF_RANGE_TO]
-        entities = [
-            EnOceanTemperatureSensor(
-                dev_id,
-                dev_name,
-                SENSOR_DESC_TEMPERATURE,
-                scale_min=temp_min,
-                scale_max=temp_max,
-                range_from=range_from,
-                range_to=range_to,
-            )
-        ]
+    if (description := SENSOR_DESCRIPTIONS.get(sensor_type)) is None:
+        LOGGER.warning("Unknown sensor type %s of %s", sensor_type, dev_name)
+        return
 
-    elif sensor_type == SENSOR_TYPE_HUMIDITY:
-        entities = [EnOceanHumiditySensor(dev_id, dev_name, SENSOR_DESC_HUMIDITY)]
-
-    elif sensor_type == SENSOR_TYPE_POWER:
-        entities = [EnOceanPowerSensor(dev_id, dev_name, SENSOR_DESC_POWER)]
-
-    elif sensor_type == SENSOR_TYPE_WINDOWHANDLE:
-        entities = [EnOceanWindowHandle(dev_id, dev_name, SENSOR_DESC_WINDOWHANDLE)]
-
-    add_entities(entities)
+    address = EURID(dev_id)
+    async_add_device(
+        hass,
+        EnOceanDevice(
+            address=address,
+            device_type=description.device_type_fn(config),
+            name=dev_name,
+        ),
+    )
+    async_add_entities([EnOceanSensor(address, dev_id, dev_name, description)])
 
 
 class EnOceanSensor(EnOceanEntity, RestoreSensor):
     """Representation of an EnOcean sensor device such as a power meter."""
 
+    entity_description: EnOceanSensorEntityDescription
+
     def __init__(
         self,
+        address: EURID,
         dev_id: list[int],
         dev_name: str,
         description: EnOceanSensorEntityDescription,
     ) -> None:
         """Initialize the EnOcean sensor device."""
-        super().__init__(dev_id)
+        super().__init__(address)
         self.entity_description = description
         self._attr_name = f"{description.name} {dev_name}"
-        self._attr_unique_id = description.unique_id(dev_id)
+        self._attr_unique_id = f"{combine_hex(dev_id)}-{description.key}"
 
     @override
     async def async_added_to_hass(self) -> None:
-        """Call when entity about to be added to hass."""
-        # If not None, we got an initial value.
+        """Restore the last known value."""
         await super().async_added_to_hass()
-        if self._attr_native_value is not None:
-            return
-
         if (sensor_data := await self.async_get_last_sensor_data()) is not None:
             self._attr_native_value = sensor_data.native_value
 
     @override
-    def value_changed(self, telegram: ERP1Telegram) -> None:
-        """Update the internal state of the sensor."""
-
-
-class EnOceanPowerSensor(EnOceanSensor):
-    """Representation of an EnOcean power sensor.
-
-    EEPs (EnOcean Equipment Profiles):
-    - A5-12-01 (Automated Meter Reading, Electricity)
-    """
-
-    @override
-    def value_changed(self, telegram: ERP1Telegram) -> None:
-        """Update the internal state of the sensor."""
-        if telegram.rorg != 0xA5:
+    @callback
+    def _async_observation_received(self, observation: Observation) -> None:
+        """Update the value from an observation of the sensor."""
+        if observation.entity != self.entity_description.device_entity:
             return
-
-        if (eep := EEP_SPECIFICATIONS.get(EEP(0xA5, 0x12, 0x01))) is None:
-            return
-        msg: EEPMessage = EEPHandler(eep).decode(telegram)
-
-        if "DT" in msg.values and msg.values["DT"].raw == 1:
-            # this packet reports the current value
-            raw_val = msg.values["MR"].raw
-            divisor = msg.values["DIV"].raw
-            self._attr_native_value = raw_val / (10**divisor)
-            self.schedule_update_ha_state()
-
-
-class EnOceanTemperatureSensor(EnOceanSensor):
-    """Representation of an EnOcean temperature sensor device.
-
-    EEPs (EnOcean Equipment Profiles):
-    - A5-02-01 to A5-02-1B All 8 Bit Temperature Sensors of A5-02
-    - A5-10-01 to A5-10-14 (Room Operating Panels)
-    - A5-04-01 (Temp. and Humidity Sensor, Range 0°C to +40°C and 0% to 100%)
-    - A5-04-02 (Temp. and Humidity Sensor, Range -20°C to +60°C and 0% to 100%)
-    - A5-10-10 (Temp. and Humidity Sensor and Set Point)
-    - A5-10-12 (Temp. and Humidity Sensor, Set Point and Occupancy Control)
-    - 10 Bit Temp. Sensors are not supported (A5-02-20, A5-02-30)
-
-    For the following EEPs the scales must be set to "0 to 250":
-    - A5-04-01
-    - A5-04-02
-    - A5-10-10 to A5-10-14
-    """
-
-    def __init__(
-        self,
-        dev_id: list[int],
-        dev_name: str,
-        description: EnOceanSensorEntityDescription,
-        *,
-        scale_min: int,
-        scale_max: int,
-        range_from: int,
-        range_to: int,
-    ) -> None:
-        """Initialize the EnOcean temperature sensor device."""
-        super().__init__(dev_id, dev_name, description)
-        self._scale_min = scale_min
-        self._scale_max = scale_max
-        self.range_from = range_from
-        self.range_to = range_to
-
-    @override
-    def value_changed(self, telegram: ERP1Telegram) -> None:
-        """Update the internal state of the sensor."""
-        if telegram.rorg != 0xA5:
-            return
-        temp_scale = self._scale_max - self._scale_min
-        temp_range = self.range_to - self.range_from
-        raw_val = telegram.telegram_data[2]
-        temperature = temp_scale / temp_range * (raw_val - self.range_from)
-        temperature += self._scale_min
-        self._attr_native_value = round(temperature, 1)
-        self.schedule_update_ha_state()
-
-
-class EnOceanHumiditySensor(EnOceanSensor):
-    """Representation of an EnOcean humidity sensor device.
-
-    EEPs (EnOcean Equipment Profiles):
-    - A5-04-01 (Temp. and Humidity Sensor, Range 0°C to +40°C and 0% to 100%)
-    - A5-04-02 (Temp. and Humidity Sensor, Range -20°C to +60°C and 0% to 100%)
-    - A5-10-10 to A5-10-14 (Room Operating Panels)
-    """
-
-    @override
-    def value_changed(self, telegram: ERP1Telegram) -> None:
-        """Update the internal state of the sensor."""
-        if telegram.rorg != 0xA5:
-            return
-        humidity = telegram.telegram_data[1] * 100 / 250
-        self._attr_native_value = round(humidity, 1)
-        self.schedule_update_ha_state()
-
-
-class EnOceanWindowHandle(EnOceanSensor):
-    """Representation of an EnOcean window handle device.
-
-    EEPs (EnOcean Equipment Profiles):
-    - F6-10-00 (Mechanical handle / Hoppe AG)
-    """
-
-    @override
-    def value_changed(self, telegram: ERP1Telegram) -> None:
-        """Update the internal state of the sensor."""
-        action = (telegram.telegram_data[0] & 0x70) >> 4
-
-        if action == 0x07:
-            self._attr_native_value = STATE_CLOSED
-        if action in (0x04, 0x06):
-            self._attr_native_value = STATE_OPEN
-        if action == 0x05:
-            self._attr_native_value = "tilt"
-
-        self.schedule_update_ha_state()
+        self._attr_native_value = self.entity_description.value_fn(
+            observation.values[self.entity_description.observable]
+        )
+        self.async_write_ha_state()

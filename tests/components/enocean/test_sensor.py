@@ -112,20 +112,31 @@ async def test_temperature_unknown_scale(
 
 @pytest.mark.usefixtures("init_integration")
 @pytest.mark.parametrize(
-    "packet_args",
+    ("rorg", "data", "sender", "status"),
     [
-        pytest.param((RORG_4BS, [0x08, 0x28, 0x0B, 0xF0], SENSOR_ID), id="teach_in"),
-        pytest.param((RORG_RPS, [0x70], SENSOR_ID, 0x30), id="rps"),
-        pytest.param((RORG_4BS, [0x00, 0x00, 0x80, 0x08], OTHER_ID), id="other_sender"),
+        pytest.param(
+            RORG_4BS, [0x08, 0x28, 0x0B, 0xF0], SENSOR_ID, 0x00, id="teach_in"
+        ),
+        pytest.param(RORG_RPS, [0x70], SENSOR_ID, 0x30, id="rps"),
+        pytest.param(
+            RORG_4BS, [0x00, 0x00, 0x80, 0x08], OTHER_ID, 0x00, id="other_sender"
+        ),
     ],
 )
 async def test_temperature_ignored_telegrams(
-    hass: HomeAssistant, mock_gateway: Gateway, packet_args: tuple
+    hass: HomeAssistant,
+    mock_gateway: Gateway,
+    rorg: int,
+    data: list[int],
+    sender: list[int],
+    status: int,
 ) -> None:
     """Test telegrams that are not a data telegram of the sensor are ignored."""
     await async_setup_yaml_platform(hass, Platform.SENSOR, TEMPERATURE_CONFIG)
 
-    await async_receive_packet(hass, mock_gateway, erp1_packet(*packet_args))
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(rorg, data, sender, status)
+    )
 
     assert hass.states.get(TEMPERATURE_ENTITY_ID).state == STATE_UNKNOWN
 

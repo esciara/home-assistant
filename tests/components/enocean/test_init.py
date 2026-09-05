@@ -1,12 +1,12 @@
 """Test the EnOcean integration."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from enocean_async import Gateway
 import pytest
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import Platform
+from homeassistant.const import CONF_DEVICE, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
@@ -68,6 +68,28 @@ async def test_yaml_devices_registered_when_gateway_starts(
 
     await async_receive_packet(
         hass, mock_gateway, erp1_packet(RORG_4BS, [0x00, 0x00, 0x00, 0x08], SENSOR_ID)
+    )
+
+    assert hass.states.get(TEMPERATURE_ENTITY_ID).state == "40.0"
+
+
+async def test_yaml_devices_registered_again_after_reload(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """Test devices keep updating from the gateway a hub reload creates."""
+    await async_setup_yaml_platform(hass, Platform.SENSOR, TEMPERATURE_CONFIG)
+
+    new_gateway = Gateway(port=init_integration.data[CONF_DEVICE])
+    with (
+        patch("homeassistant.components.enocean.Gateway", return_value=new_gateway),
+        patch.object(new_gateway, "start", AsyncMock()),
+    ):
+        await hass.config_entries.async_reload(init_integration.entry_id)
+        await hass.async_block_till_done()
+
+    assert init_integration.state is ConfigEntryState.LOADED
+    await async_receive_packet(
+        hass, new_gateway, erp1_packet(RORG_4BS, [0x00, 0x00, 0x00, 0x08], SENSOR_ID)
     )
 
     assert hass.states.get(TEMPERATURE_ENTITY_ID).state == "40.0"

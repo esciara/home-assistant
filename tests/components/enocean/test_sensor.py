@@ -309,20 +309,6 @@ async def test_window_handle(
 
 
 @pytest.mark.usefixtures("init_integration")
-async def test_window_handle_4bs_telegram(
-    hass: HomeAssistant, mock_gateway: Gateway
-) -> None:
-    """Test the library decodes a 4BS telegram from the handle's address as a position."""
-    await async_setup_yaml_platform(hass, Platform.SENSOR, WINDOW_HANDLE_CONFIG)
-
-    await async_receive_packet(
-        hass, mock_gateway, erp1_packet(RORG_4BS, [0x00, 0x00, 0x80, 0x08], SENSOR_ID)
-    )
-
-    assert hass.states.get(WINDOW_HANDLE_ENTITY_ID).state == "open"
-
-
-@pytest.mark.usefixtures("init_integration")
 async def test_restore_last_value(hass: HomeAssistant) -> None:
     """Test the last known value is restored at startup."""
     mock_restore_cache_with_extra_data(

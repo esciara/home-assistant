@@ -87,7 +87,10 @@ async def async_setup_platform(
     async_add_device(
         hass,
         EnOceanDevice(
-            address=address, device_type=DEVICE_TYPES[device_type_id], name=dev_name
+            address=address,
+            device_type=DEVICE_TYPES[device_type_id],
+            name=dev_name,
+            controllable=True,
         ),
     )
     async_add_entities([EnOceanSwitch(address, dev_name, channel)])

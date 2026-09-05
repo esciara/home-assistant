@@ -70,6 +70,7 @@ async def async_setup_platform(
             device_type=DEVICE_TYPES[DEVICE_TYPE_ID],
             name=dev_name,
             sender=sender_address(config[CONF_SENDER_ID]),
+            controllable=True,
         ),
     )
     async_add_entities([EnOceanLight(address, dev_name)])

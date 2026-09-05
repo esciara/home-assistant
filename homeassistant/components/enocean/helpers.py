@@ -20,6 +20,8 @@ class EnOceanDevice:
     device_type: DeviceType
     name: str
     sender: SenderAddress | None = None
+    # Set by platforms that send commands, which need the device's own profile
+    controllable: bool = False
 
 
 # The library keeps no device registry, so every gateway that starts gets these
@@ -64,21 +66,33 @@ def async_get_gateway(hass: HomeAssistant) -> Gateway:
 def async_add_device(hass: HomeAssistant, device: EnOceanDevice) -> None:
     """Remember a YAML device and register it with the running gateway."""
     devices = hass.data.setdefault(DATA_DEVICES, {})
+    entries = hass.config_entries.async_loaded_entries(DOMAIN)
     if (known := devices.get(device.address)) is not None:
         known_eep = known.device_type.eep
         eep = device.device_type.eep
-        if (known_eep.rorg, known_eep.func) != (eep.rorg, eep.func):
-            LOGGER.warning(
-                "EnOcean device %s is already configured with profile %s;"
-                " ignoring profile %s of %s",
-                device.address,
-                known_eep,
-                eep,
-                device.name,
-            )
-        return
+        if (known_eep.rorg, known_eep.func) == (eep.rorg, eep.func):
+            return
+        # Whichever platform sets up first, keep the profile that controls the device
+        if device.controllable and not known.controllable:
+            kept, dropped = device, known
+        else:
+            kept, dropped = known, device
+        LOGGER.error(
+            "EnOcean device %s is configured as %s (%s) and as %s (%s);"
+            " %s is ignored and will not work",
+            device.address,
+            kept.device_type.eep,
+            kept.name,
+            dropped.device_type.eep,
+            dropped.name,
+            dropped.name,
+        )
+        if kept is known:
+            return
+        for entry in entries:
+            entry.runtime_data.remove_device(device.address)
     devices[device.address] = device
-    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+    for entry in entries:
         _register_device(entry.runtime_data, device)
 
 

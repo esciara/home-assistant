@@ -167,7 +167,7 @@ async def test_temperature_and_humidity_of_one_device(
         hass, mock_gateway, erp1_packet(RORG_4BS, [0x00, 125, 125, 0x08], SENSOR_ID)
     )
 
-    assert "already configured" not in caplog.text
+    assert "is ignored" not in caplog.text
     assert hass.states.get(TEMPERATURE_ENTITY_ID).state == "20.0"
     assert hass.states.get(HUMIDITY_ENTITY_ID).state == "50.0"
 
@@ -178,7 +178,7 @@ async def test_conflicting_profiles_keep_the_first(
 ) -> None:
     """Test a second block with an incompatible profile for a device is reported."""
     await async_setup_yaml_platform(
-        hass, Platform.SENSOR, TEMPERATURE_CONFIG, HUMIDITY_CONFIG
+        hass, Platform.SENSOR, TEMPERATURE_CONFIG, {**HUMIDITY_CONFIG, "name": "Bath"}
     )
 
     await async_receive_packet(
@@ -186,11 +186,11 @@ async def test_conflicting_profiles_keep_the_first(
     )
 
     assert (
-        "01:02:03:04 is already configured with profile A5-02-05;"
-        " ignoring profile A5-04-01 of Room" in caplog.text
+        "EnOcean device 01:02:03:04 is configured as A5-02-05 (Room) and as"
+        " A5-04-01 (Bath); Bath is ignored and will not work" in caplog.text
     )
     assert hass.states.get(TEMPERATURE_ENTITY_ID).state == "40.0"
-    assert hass.states.get(HUMIDITY_ENTITY_ID).state == STATE_UNKNOWN
+    assert hass.states.get("sensor.humidity_bath").state == STATE_UNKNOWN
 
 
 @pytest.mark.usefixtures("init_integration")

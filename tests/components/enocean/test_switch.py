@@ -13,6 +13,7 @@ from homeassistant.const import (
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
+    STATE_UNKNOWN,
     Platform,
 )
 from homeassistant.core import HomeAssistant
@@ -36,6 +37,8 @@ ENTITY_ID = "switch.room0"
 
 # Blocks of other platforms claiming the address of the switch
 LIGHT_CONFIG = {"id": SWITCH_ID, "sender_id": [0xFF, 0x9A, 0x88, 0x01], "name": "Dim"}
+POWER_SENSOR_CONFIG = {"id": SWITCH_ID, "name": "Meter"}
+POWER_ENTITY_ID = "sensor.power_meter"
 
 RORG_4BS = 0xA5
 RORG_VLD = 0xD2
@@ -164,6 +167,30 @@ async def test_turn_on_with_profile_of_another_platform(hass: HomeAssistant) -> 
         )
 
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_switch_profile_wins_over_power_sensor(
+    hass: HomeAssistant, mock_gateway: Gateway, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test a power sensor block for the actuator's address does not take control away."""
+    await async_setup_yaml_platform(hass, Platform.SENSOR, POWER_SENSOR_CONFIG)
+    await async_setup_yaml_platform(hass, Platform.SWITCH, SWITCH_CONFIG)
+
+    await hass.services.async_call(
+        SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
+    )
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_4BS, power_reading(100), SWITCH_ID)
+    )
+
+    assert (
+        "EnOcean device DE:AD:BE:EF is configured as D2-01-12 (room0) and as"
+        " A5-12-01 (Meter); Meter is ignored and will not work" in caplog.text
+    )
+    mock_gateway.send_esp3_packet.assert_awaited_once()
+    assert hass.states.get(ENTITY_ID).state == STATE_ON
+    assert hass.states.get(POWER_ENTITY_ID).state == STATE_UNKNOWN
 
 
 @pytest.mark.usefixtures("init_integration")

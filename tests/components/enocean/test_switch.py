@@ -34,6 +34,9 @@ CHANNEL = 1
 SWITCH_CONFIG = {"id": SWITCH_ID, "channel": CHANNEL, "name": "room0"}
 ENTITY_ID = "switch.room0"
 
+# Blocks of other platforms claiming the address of the switch
+LIGHT_CONFIG = {"id": SWITCH_ID, "sender_id": [0xFF, 0x9A, 0x88, 0x01], "name": "Dim"}
+
 RORG_4BS = 0xA5
 RORG_VLD = 0xD2
 
@@ -133,6 +136,34 @@ async def test_turn_on_without_gateway(hass: HomeAssistant) -> None:
         await hass.services.async_call(
             SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
         )
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_turn_on_send_failure(hass: HomeAssistant, mock_gateway: Gateway) -> None:
+    """Test switching fails when the gateway cannot send the command."""
+    await async_setup_yaml_platform(hass, Platform.SWITCH, SWITCH_CONFIG)
+    mock_gateway.send_esp3_packet.side_effect = ConnectionError("Serial port closed")
+
+    with pytest.raises(HomeAssistantError, match="Cannot send command"):
+        await hass.services.async_call(
+            SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
+        )
+
+    assert hass.states.get(ENTITY_ID).state == STATE_OFF
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_turn_on_with_profile_of_another_platform(hass: HomeAssistant) -> None:
+    """Test switching fails when a light block claimed the address first."""
+    await async_setup_yaml_platform(hass, Platform.LIGHT, LIGHT_CONFIG)
+    await async_setup_yaml_platform(hass, Platform.SWITCH, SWITCH_CONFIG)
+
+    with pytest.raises(HomeAssistantError, match="not supported"):
+        await hass.services.async_call(
+            SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
+        )
+
+    assert hass.states.get(ENTITY_ID).state == STATE_OFF
 
 
 @pytest.mark.usefixtures("init_integration")

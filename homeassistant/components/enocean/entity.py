@@ -5,6 +5,7 @@ from typing import override
 from enocean_async import EURID, Instruction, Observation
 
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
 
@@ -51,4 +52,10 @@ class EnOceanEntity(Entity):
 
     async def _async_send_command(self, command: Instruction) -> None:
         """Send a command to the device through the gateway."""
-        await async_get_gateway(self.hass).send_command(self._address, command)
+        gateway = async_get_gateway(self.hass)
+        try:
+            await gateway.send_command(self._address, command)
+        except (ConnectionError, ValueError) as err:
+            raise HomeAssistantError(
+                f"Cannot send command to EnOcean device {self._address}: {err}"
+            ) from err

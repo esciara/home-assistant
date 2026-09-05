@@ -99,7 +99,8 @@ def _keep_known_device(known: EnOceanDevice, device: EnOceanDevice) -> bool:
     return kept is known
 
 
-def register_devices(hass: HomeAssistant, gateway: Gateway) -> None:
+@callback
+def async_register_devices(hass: HomeAssistant, gateway: Gateway) -> None:
     """Register every YAML device with a gateway that just started."""
     for device in hass.data.get(DATA_DEVICES, {}).values():
         _register_device(gateway, device)

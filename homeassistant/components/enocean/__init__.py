@@ -12,7 +12,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, SIGNAL_OBSERVATION
-from .helpers import register_devices
+from .helpers import async_register_devices
 
 type EnOceanConfigEntry = ConfigEntry[Gateway]
 
@@ -61,7 +61,7 @@ async def async_setup_entry(
         await gateway.stop()
         raise ConfigEntryNotReady(f"Failed to start EnOcean gateway: {err}") from err
 
-    register_devices(hass, gateway)
+    async_register_devices(hass, gateway)
     config_entry.runtime_data = gateway
     return True
 

@@ -1,20 +1,18 @@
 """Support for EnOcean devices."""
 
-from enocean_async import Gateway
+from enocean_async import Gateway, Observation
 import voluptuous as vol
 
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_DEVICE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.dispatcher import (
-    async_dispatcher_connect,
-    async_dispatcher_send,
-)
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN, SIGNAL_RECEIVE_MESSAGE, SIGNAL_SEND_MESSAGE
+from .const import DOMAIN, SIGNAL_OBSERVATION
+from .helpers import register_devices
 
 type EnOceanConfigEntry = ConfigEntry[Gateway]
 
@@ -49,21 +47,22 @@ async def async_setup_entry(
     """Set up an EnOcean gateway for the given entry."""
     gateway = Gateway(port=config_entry.data[CONF_DEVICE])
 
-    gateway.add_erp1_received_callback(
-        lambda packet: async_dispatcher_send(hass, SIGNAL_RECEIVE_MESSAGE, packet)
-    )
+    @callback
+    def _async_observation_received(observation: Observation) -> None:
+        async_dispatcher_send(
+            hass, SIGNAL_OBSERVATION.format(address=observation.device), observation
+        )
+
+    gateway.add_observation_callback(_async_observation_received)
 
     try:
         await gateway.start()
     except ConnectionError as err:
-        gateway.stop()
+        await gateway.stop()
         raise ConfigEntryNotReady(f"Failed to start EnOcean gateway: {err}") from err
 
+    register_devices(hass, gateway)
     config_entry.runtime_data = gateway
-
-    config_entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_SEND_MESSAGE, gateway.send_esp3_packet)
-    )
     return True
 
 
@@ -72,5 +71,5 @@ async def async_unload_entry(
 ) -> bool:
     """Unload EnOcean config entry: stop the gateway."""
 
-    config_entry.runtime_data.stop()
+    await config_entry.runtime_data.stop()
     return True

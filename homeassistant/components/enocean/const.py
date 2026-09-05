@@ -10,8 +10,7 @@ MANUFACTURER = "EnOcean"
 
 ERROR_INVALID_DONGLE_PATH = "invalid_dongle_path"
 
-SIGNAL_RECEIVE_MESSAGE = "enocean.receive_message"
-SIGNAL_SEND_MESSAGE = "enocean.send_message"
+SIGNAL_OBSERVATION = f"{DOMAIN}_observation_{{address}}"
 
 LOGGER = logging.getLogger(__package__)
 

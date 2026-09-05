@@ -1,8 +1,6 @@
 """Tests for the EnOcean switch platform."""
 
-from unittest.mock import Mock
-
-from enocean_async.esp3.packet import ESP3Packet, ESP3PacketType
+from enocean_async import Gateway
 import pytest
 from syrupy.assertion import SnapshotAssertion
 
@@ -18,9 +16,16 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
-from . import async_receive_telegram, async_setup_yaml_platform, erp1_telegram
+from . import (
+    BASE_ID,
+    async_receive_packet,
+    async_setup_yaml_platform,
+    erp1_packet,
+    sent_packet,
+)
 
 from tests.common import MockConfigEntry
 
@@ -31,15 +36,6 @@ ENTITY_ID = "switch.room0"
 
 RORG_4BS = 0xA5
 RORG_VLD = 0xD2
-
-
-def actuator_set_output(output_value: int) -> ESP3Packet:
-    """Return the D2-01 set output command the switch sends for an output value."""
-    return ESP3Packet(
-        ESP3PacketType.RADIO_ERP1,
-        data=bytes([0xD2, 0x01, CHANNEL, output_value, 0x00, 0x00, 0x00, 0x00, 0x00]),
-        optional=bytes([0x03, *SWITCH_ID, 0xFF, 0x00]),
-    )
 
 
 def actuator_status_response(channel: int, output_value: int) -> list[int]:
@@ -105,12 +101,12 @@ async def test_entity(
 )
 async def test_turn_on_off(
     hass: HomeAssistant,
-    mock_gateway: Mock,
+    mock_gateway: Gateway,
     service: str,
     output_value: int,
     state: str,
 ) -> None:
-    """Test switching sends a set output command addressed to the actuator."""
+    """Test switching sends a set output command for the channel to the actuator."""
     await async_setup_yaml_platform(hass, Platform.SWITCH, SWITCH_CONFIG)
 
     await hass.services.async_call(
@@ -119,9 +115,24 @@ async def test_turn_on_off(
     await hass.async_block_till_done()
 
     mock_gateway.send_esp3_packet.assert_awaited_once_with(
-        actuator_set_output(output_value)
+        sent_packet(
+            RORG_VLD,
+            [0x01, CHANNEL, output_value],
+            BASE_ID.bytelist,
+            destination=SWITCH_ID,
+        )
     )
     assert hass.states.get(ENTITY_ID).state == state
+
+
+async def test_turn_on_without_gateway(hass: HomeAssistant) -> None:
+    """Test switching fails while the hub is not set up."""
+    await async_setup_yaml_platform(hass, Platform.SWITCH, SWITCH_CONFIG)
+
+    with pytest.raises(HomeAssistantError, match="not connected"):
+        await hass.services.async_call(
+            SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
+        )
 
 
 @pytest.mark.usefixtures("init_integration")
@@ -140,45 +151,36 @@ async def test_turn_on_off(
         pytest.param(
             [actuator_status_response(CHANNEL + 1, 0x64)], STATE_OFF, id="other_channel"
         ),
-        pytest.param([[0x01, CHANNEL, 0x64]], STATE_OFF, id="other_command"),
+        pytest.param(
+            [[0x07, 0x60 | CHANNEL, 0x00, 0x00, 0x00, 0x64]],
+            STATE_OFF,
+            id="measurement_response",
+        ),
     ],
 )
 async def test_actuator_status(
-    hass: HomeAssistant, mock_gateway: Mock, telegrams: list[list[int]], state: str
+    hass: HomeAssistant, mock_gateway: Gateway, telegrams: list[list[int]], state: str
 ) -> None:
     """Test the state follows the status responses for the configured channel."""
     await async_setup_yaml_platform(hass, Platform.SWITCH, SWITCH_CONFIG)
 
     for data in telegrams:
-        await async_receive_telegram(
-            hass, mock_gateway, erp1_telegram(RORG_VLD, data, SWITCH_ID)
+        await async_receive_packet(
+            hass, mock_gateway, erp1_packet(RORG_VLD, data, SWITCH_ID)
         )
 
     assert hass.states.get(ENTITY_ID).state == state
 
 
 @pytest.mark.usefixtures("init_integration")
-@pytest.mark.parametrize(
-    ("telegrams", "state"),
-    [
-        pytest.param([power_reading(100)], STATE_ON, id="above_one_watt_turns_on"),
-        pytest.param([power_reading(1)], STATE_OFF, id="one_watt_stays_off"),
-        pytest.param(
-            [power_reading(100), power_reading(0)],
-            STATE_ON,
-            id="zero_watts_never_turns_off",
-        ),
-    ],
-)
-async def test_power_reading_turns_on_but_never_off_quirk(
-    hass: HomeAssistant, mock_gateway: Mock, telegrams: list[list[int]], state: str
+async def test_power_reading_ignored(
+    hass: HomeAssistant, mock_gateway: Gateway
 ) -> None:
-    """Test a power reading above 1 W turns the switch on and no reading turns it off."""
+    """Test a power reading from the actuator does not change the switch state."""
     await async_setup_yaml_platform(hass, Platform.SWITCH, SWITCH_CONFIG)
 
-    for data in telegrams:
-        await async_receive_telegram(
-            hass, mock_gateway, erp1_telegram(RORG_4BS, data, SWITCH_ID)
-        )
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_4BS, power_reading(100), SWITCH_ID)
+    )
 
-    assert hass.states.get(ENTITY_ID).state == state
+    assert hass.states.get(ENTITY_ID).state == STATE_OFF

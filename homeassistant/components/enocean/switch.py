@@ -41,7 +41,9 @@ def generate_unique_id(dev_id: list[int], channel: int) -> str:
     return f"{combine_hex(dev_id)}-{channel}"
 
 
-def _migrate_to_new_unique_id(hass: HomeAssistant, dev_id, channel) -> None:
+def _migrate_to_new_unique_id(
+    hass: HomeAssistant, dev_id: list[int], channel: int
+) -> None:
     """Migrate old unique ids to new unique ids."""
     old_unique_id = f"{combine_hex(dev_id)}"
 
@@ -88,7 +90,7 @@ async def async_setup_platform(
             address=address, device_type=DEVICE_TYPES[device_type_id], name=dev_name
         ),
     )
-    async_add_entities([EnOceanSwitch(address, dev_id, dev_name, channel)])
+    async_add_entities([EnOceanSwitch(address, dev_name, channel)])
 
 
 class EnOceanSwitch(EnOceanEntity, SwitchEntity):
@@ -96,14 +98,12 @@ class EnOceanSwitch(EnOceanEntity, SwitchEntity):
 
     _attr_is_on = False
 
-    def __init__(
-        self, address: EURID, dev_id: list[int], dev_name: str, channel: int
-    ) -> None:
+    def __init__(self, address: EURID, dev_name: str, channel: int) -> None:
         """Initialize the EnOcean switch device."""
         super().__init__(address)
         self._channel = channel
         self._device_entity = f"ch{channel + 1}_switch_state"
-        self._attr_unique_id = generate_unique_id(dev_id, channel)
+        self._attr_unique_id = generate_unique_id(address.bytelist, channel)
         self._attr_name = dev_name
 
     @override

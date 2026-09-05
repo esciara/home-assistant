@@ -83,7 +83,7 @@ async def async_setup_platform(
             sender=sender_address(sender_id),
         ),
     )
-    async_add_entities([EnOceanLight(address, dev_id, dev_name)])
+    async_add_entities([EnOceanLight(address, dev_name)])
 
 
 class EnOceanLight(EnOceanEntity, LightEntity):
@@ -94,10 +94,10 @@ class EnOceanLight(EnOceanEntity, LightEntity):
     _attr_brightness = 255
     _attr_is_on = False
 
-    def __init__(self, address: EURID, dev_id: list[int], dev_name: str) -> None:
+    def __init__(self, address: EURID, dev_name: str) -> None:
         """Initialize the EnOcean light source."""
         super().__init__(address)
-        self._attr_unique_id = str(combine_hex(dev_id))
+        self._attr_unique_id = str(combine_hex(address.bytelist))
         self._attr_name = dev_name
 
     @override

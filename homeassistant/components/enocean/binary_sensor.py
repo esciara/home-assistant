@@ -53,18 +53,17 @@ async def async_setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the Binary Sensor platform for EnOcean."""
-    dev_id: list[int] = config[CONF_ID]
     dev_name: str = config[CONF_NAME]
     device_class: BinarySensorDeviceClass | None = config.get(CONF_DEVICE_CLASS)
 
-    address = EURID(dev_id)
+    address = EURID(config[CONF_ID])
     async_add_device(
         hass,
         EnOceanDevice(
             address=address, device_type=DEVICE_TYPES[DEVICE_TYPE_ID], name=dev_name
         ),
     )
-    async_add_entities([EnOceanBinarySensor(address, dev_id, dev_name, device_class)])
+    async_add_entities([EnOceanBinarySensor(address, dev_name, device_class)])
 
 
 class EnOceanBinarySensor(EnOceanEntity, BinarySensorEntity):
@@ -80,14 +79,13 @@ class EnOceanBinarySensor(EnOceanEntity, BinarySensorEntity):
     def __init__(
         self,
         address: EURID,
-        dev_id: list[int],
         dev_name: str,
         device_class: BinarySensorDeviceClass | None,
     ) -> None:
         """Initialize the EnOcean binary sensor."""
         super().__init__(address)
         self._attr_device_class = device_class
-        self._attr_unique_id = f"{combine_hex(dev_id)}-{device_class}"
+        self._attr_unique_id = f"{combine_hex(address.bytelist)}-{device_class}"
         self._attr_name = dev_name
         self._pressed: set[str] = set()
 

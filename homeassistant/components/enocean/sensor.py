@@ -185,7 +185,6 @@ async def async_setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up an EnOcean sensor device."""
-    dev_id: list[int] = config[CONF_ID]
     dev_name: str = config[CONF_NAME]
     sensor_type: str = config[CONF_DEVICE_CLASS]
 
@@ -193,7 +192,7 @@ async def async_setup_platform(
         LOGGER.warning("Unknown sensor type %s of %s", sensor_type, dev_name)
         return
 
-    address = EURID(dev_id)
+    address = EURID(config[CONF_ID])
     async_add_device(
         hass,
         EnOceanDevice(
@@ -202,7 +201,7 @@ async def async_setup_platform(
             name=dev_name,
         ),
     )
-    async_add_entities([EnOceanSensor(address, dev_id, dev_name, description)])
+    async_add_entities([EnOceanSensor(address, dev_name, description)])
 
 
 class EnOceanSensor(EnOceanEntity, RestoreSensor):
@@ -213,7 +212,6 @@ class EnOceanSensor(EnOceanEntity, RestoreSensor):
     def __init__(
         self,
         address: EURID,
-        dev_id: list[int],
         dev_name: str,
         description: EnOceanSensorEntityDescription,
     ) -> None:
@@ -221,7 +219,7 @@ class EnOceanSensor(EnOceanEntity, RestoreSensor):
         super().__init__(address)
         self.entity_description = description
         self._attr_name = f"{description.name} {dev_name}"
-        self._attr_unique_id = f"{combine_hex(dev_id)}-{description.key}"
+        self._attr_unique_id = f"{combine_hex(address.bytelist)}-{description.key}"
 
     @override
     async def async_added_to_hass(self) -> None:

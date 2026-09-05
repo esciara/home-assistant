@@ -85,7 +85,7 @@ def _keep_known_device(known: EnOceanDevice, device: EnOceanDevice) -> bool:
     kept, dropped = (device, known) if new_wins else (known, device)
     # Within a family, a block pinning the profile down refines the other block
     if not same_family or kept.rank == dropped.rank:
-        LOGGER.error(
+        LOGGER.warning(
             "EnOcean device %s is configured as %s (%s) and as %s (%s);"
             " %s is decoded as %s instead",
             device.address,

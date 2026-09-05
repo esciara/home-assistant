@@ -1,8 +1,7 @@
 """Tests for the EnOcean light platform."""
 
-from unittest.mock import Mock
-
-from enocean_async.esp3.packet import ESP3Packet, ESP3PacketType
+from enocean_async import Gateway
+from enocean_async.protocol.esp3.packet import ESP3Packet
 import pytest
 from syrupy.assertion import SnapshotAssertion
 
@@ -18,7 +17,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from . import async_receive_telegram, async_setup_yaml_platform, erp1_telegram
+from . import async_receive_packet, async_setup_yaml_platform, erp1_packet, sent_packet
 
 LIGHT_ID = [0x01, 0x02, 0x03, 0x04]
 OTHER_ID = [0x0A, 0x0B, 0x0C, 0x0D]
@@ -29,14 +28,28 @@ ENTITY_ID = "light.dimmer"
 RORG_RPS = 0xF6
 RORG_4BS = 0xA5
 
+DIMMER_OFF = [0x02, 0x00, 0x00, 0x08]
 
-def central_command(dim_value: int) -> ESP3Packet:
-    """Return the 4BS central command the light sends for a dim value."""
-    return ESP3Packet(
-        ESP3PacketType.RADIO_ERP1,
-        data=bytes([0xA5, 0x02, dim_value, 0x01, 0x09, *SENDER_ID, 0x00]),
-        optional=b"",
+
+def central_dim(dim_value: int, sender: list[int]) -> ESP3Packet:
+    """Return the central command dimming to a value that the light sends."""
+    return sent_packet(RORG_4BS, [0x02, dim_value, 0x01, 0x09], sender)
+
+
+def dimmer_status(dim_value: int, on: bool) -> list[int]:
+    """Return the data of the status telegram of an Eltako dimmer."""
+    return [0x02, dim_value, 0x00, 0x09 if on else 0x08]
+
+
+async def async_turn_on(hass: HomeAssistant, **service_data: int) -> None:
+    """Turn the dimmer on."""
+    await hass.services.async_call(
+        LIGHT_DOMAIN,
+        SERVICE_TURN_ON,
+        {ATTR_ENTITY_ID: ENTITY_ID, **service_data},
+        blocking=True,
     )
+    await hass.async_block_till_done()
 
 
 @pytest.mark.usefixtures("init_integration")
@@ -56,39 +69,50 @@ async def test_entity(
 @pytest.mark.parametrize(
     ("service_data", "dim_value", "brightness"),
     [
-        pytest.param({}, 19, 50, id="default_brightness"),
-        pytest.param({ATTR_BRIGHTNESS: 255}, 99, 255, id="full_brightness"),
+        pytest.param({}, 100, 255, id="default_brightness"),
+        pytest.param({ATTR_BRIGHTNESS: 255}, 100, 255, id="full_brightness"),
         pytest.param({ATTR_BRIGHTNESS: 128}, 50, 128, id="half_brightness"),
         pytest.param({ATTR_BRIGHTNESS: 1}, 1, 1, id="minimum_brightness"),
     ],
 )
 async def test_turn_on(
     hass: HomeAssistant,
-    mock_gateway: Mock,
+    mock_gateway: Gateway,
     service_data: dict[str, int],
     dim_value: int,
     brightness: int,
 ) -> None:
-    """Test turning on sends a central dim command scaled to 1..99 percent."""
+    """Test turning on sends a central dim command scaled to 1..100 percent."""
     await async_setup_yaml_platform(hass, Platform.LIGHT, LIGHT_CONFIG)
 
-    await hass.services.async_call(
-        LIGHT_DOMAIN,
-        SERVICE_TURN_ON,
-        {ATTR_ENTITY_ID: ENTITY_ID, **service_data},
-        blocking=True,
-    )
-    await hass.async_block_till_done()
+    await async_turn_on(hass, **service_data)
 
-    mock_gateway.send_esp3_packet.assert_awaited_once_with(central_command(dim_value))
+    mock_gateway.send_esp3_packet.assert_awaited_once_with(
+        central_dim(dim_value, SENDER_ID)
+    )
     state = hass.states.get(ENTITY_ID)
     assert state.state == STATE_ON
     assert state.attributes[ATTR_BRIGHTNESS] == brightness
 
 
 @pytest.mark.usefixtures("init_integration")
-async def test_turn_off(hass: HomeAssistant, mock_gateway: Mock) -> None:
-    """Test turning off sends a central dim command with value zero."""
+async def test_turn_on_from_device_address(
+    hass: HomeAssistant, mock_gateway: Gateway
+) -> None:
+    """Test the command is sent from a sender id in the device address range."""
+    sender_id = [0x01, 0x9A, 0x88, 0x01]
+    await async_setup_yaml_platform(
+        hass, Platform.LIGHT, {**LIGHT_CONFIG, "sender_id": sender_id}
+    )
+
+    await async_turn_on(hass)
+
+    mock_gateway.send_esp3_packet.assert_awaited_once_with(central_dim(100, sender_id))
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_turn_off(hass: HomeAssistant, mock_gateway: Gateway) -> None:
+    """Test turning off sends the dim off command of the dimmer."""
     await async_setup_yaml_platform(hass, Platform.LIGHT, LIGHT_CONFIG)
 
     await hass.services.async_call(
@@ -96,34 +120,35 @@ async def test_turn_off(hass: HomeAssistant, mock_gateway: Mock) -> None:
     )
     await hass.async_block_till_done()
 
-    mock_gateway.send_esp3_packet.assert_awaited_once_with(central_command(0))
+    mock_gateway.send_esp3_packet.assert_awaited_once_with(
+        sent_packet(RORG_4BS, DIMMER_OFF, SENDER_ID)
+    )
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
 
 
 @pytest.mark.usefixtures("init_integration")
 @pytest.mark.parametrize(
-    ("dim_value", "state", "brightness"),
+    ("data", "state", "brightness"),
     [
-        pytest.param(50, STATE_ON, 128, id="half"),
-        pytest.param(1, STATE_ON, 2, id="minimum"),
-        pytest.param(100, STATE_ON, 256, id="full_exceeds_255_quirk"),
-        pytest.param(0, STATE_OFF, None, id="off"),
+        pytest.param(dimmer_status(50, on=True), STATE_ON, 128, id="half"),
+        pytest.param(dimmer_status(100, on=True), STATE_ON, 255, id="full"),
+        pytest.param(dimmer_status(1, on=True), STATE_ON, 3, id="minimum"),
+        pytest.param(dimmer_status(0, on=False), STATE_OFF, None, id="off"),
+        pytest.param(dimmer_status(50, on=False), STATE_OFF, None, id="switched_off"),
     ],
 )
 async def test_dimmer_status(
     hass: HomeAssistant,
-    mock_gateway: Mock,
-    dim_value: int,
+    mock_gateway: Gateway,
+    data: list[int],
     state: str,
     brightness: int | None,
 ) -> None:
-    """Test the state follows the dim value reported by the dimmer."""
+    """Test the state follows the status reported by the dimmer."""
     await async_setup_yaml_platform(hass, Platform.LIGHT, LIGHT_CONFIG)
 
-    await async_receive_telegram(
-        hass,
-        mock_gateway,
-        erp1_telegram(RORG_4BS, [0x02, dim_value, 0x00, 0x08], LIGHT_ID),
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_4BS, data, LIGHT_ID)
     )
 
     light = hass.states.get(ENTITY_ID)
@@ -132,17 +157,35 @@ async def test_dimmer_status(
 
 
 @pytest.mark.usefixtures("init_integration")
+async def test_turn_on_returns_to_last_level(
+    hass: HomeAssistant, mock_gateway: Gateway
+) -> None:
+    """Test turning on without a brightness uses the level the dimmer had before."""
+    await async_setup_yaml_platform(hass, Platform.LIGHT, LIGHT_CONFIG)
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_4BS, dimmer_status(50, on=True), LIGHT_ID)
+    )
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_4BS, dimmer_status(0, on=False), LIGHT_ID)
+    )
+
+    await async_turn_on(hass)
+
+    mock_gateway.send_esp3_packet.assert_awaited_once_with(central_dim(50, SENDER_ID))
+    assert hass.states.get(ENTITY_ID).attributes[ATTR_BRIGHTNESS] == 128
+
+
+@pytest.mark.usefixtures("init_integration")
 @pytest.mark.parametrize(
     ("rorg", "data", "sender"),
     [
-        pytest.param(RORG_4BS, [0x01, 0x32, 0x00, 0x08], LIGHT_ID, id="other_command"),
         pytest.param(RORG_RPS, [0x70], LIGHT_ID, id="rps_telegram"),
-        pytest.param(RORG_4BS, [0x02, 0x32, 0x00, 0x08], OTHER_ID, id="other_sender"),
+        pytest.param(RORG_4BS, dimmer_status(50, on=True), OTHER_ID, id="other_sender"),
     ],
 )
 async def test_ignored_telegrams(
     hass: HomeAssistant,
-    mock_gateway: Mock,
+    mock_gateway: Gateway,
     rorg: int,
     data: list[int],
     sender: list[int],
@@ -150,22 +193,19 @@ async def test_ignored_telegrams(
     """Test telegrams that are not a dimmer status of this light are ignored."""
     await async_setup_yaml_platform(hass, Platform.LIGHT, LIGHT_CONFIG)
 
-    await async_receive_telegram(hass, mock_gateway, erp1_telegram(rorg, data, sender))
+    await async_receive_packet(hass, mock_gateway, erp1_packet(rorg, data, sender))
 
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
 
 
 @pytest.mark.usefixtures("init_integration")
-async def test_lights_without_id_collide_quirk(
-    hass: HomeAssistant, entity_registry: er.EntityRegistry
+async def test_light_without_id_is_not_created(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Test every light without an id gets unique id 0, so only the first is created."""
+    """Test a light needs the address of its dimmer."""
     await async_setup_yaml_platform(
-        hass,
-        Platform.LIGHT,
-        {"sender_id": SENDER_ID, "name": "First"},
-        {"sender_id": SENDER_ID, "name": "Second"},
+        hass, Platform.LIGHT, {"sender_id": SENDER_ID, "name": "First"}
     )
 
-    assert entity_registry.async_get("light.first").unique_id == "0"
-    assert hass.states.get("light.second") is None
+    assert "Light First is not created" in caplog.text
+    assert hass.states.async_entity_ids(LIGHT_DOMAIN) == []

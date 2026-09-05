@@ -107,6 +107,8 @@ class EnOceanSensorEntityDescription(SensorEntityDescription):
     device_entity: str
     observable: Observable
     device_type_fn: Callable[[ConfigType], DeviceType]
+    # Precedence of the profile within its family, see EnOceanDevice.rank
+    device_type_rank: int = 0
     value_fn: Callable[[Any], StateType] = lambda value: value
 
 
@@ -119,6 +121,7 @@ SENSOR_DESC_TEMPERATURE = EnOceanSensorEntityDescription(
     device_entity="temperature",
     observable=Observable.TEMPERATURE,
     device_type_fn=_temperature_device_type,
+    device_type_rank=1,
 )
 
 SENSOR_DESC_HUMIDITY = EnOceanSensorEntityDescription(
@@ -199,6 +202,7 @@ async def async_setup_platform(
             address=address,
             device_type=description.device_type_fn(config),
             name=dev_name,
+            rank=description.device_type_rank,
         ),
     )
     async_add_entities([EnOceanSensor(address, dev_name, description)])

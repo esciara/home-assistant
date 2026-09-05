@@ -91,6 +91,8 @@ async def async_setup_platform(
             device_type=DEVICE_TYPES[device_type_id],
             name=dev_name,
             controllable=True,
+            # Only a channel above 0 pins the two-channel profile down
+            rank=1 if channel else 0,
         ),
     )
     async_add_entities([EnOceanSwitch(address, dev_name, channel)])

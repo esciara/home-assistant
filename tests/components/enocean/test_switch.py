@@ -19,6 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import ConfigType
 
 from . import (
     BASE_ID,
@@ -34,6 +35,8 @@ SWITCH_ID = [0xDE, 0xAD, 0xBE, 0xEF]
 CHANNEL = 1
 SWITCH_CONFIG = {"id": SWITCH_ID, "channel": CHANNEL, "name": "room0"}
 ENTITY_ID = "switch.room0"
+FIRST_CHANNEL_CONFIG = {"id": SWITCH_ID, "channel": 0, "name": "room1"}
+FIRST_CHANNEL_ENTITY_ID = "switch.room1"
 
 # Blocks of other platforms claiming the address of the switch
 LIGHT_CONFIG = {"id": SWITCH_ID, "sender_id": [0xFF, 0x9A, 0x88, 0x01], "name": "Dim"}
@@ -186,11 +189,48 @@ async def test_switch_profile_wins_over_power_sensor(
 
     assert (
         "EnOcean device DE:AD:BE:EF is configured as D2-01-12 (room0) and as"
-        " A5-12-01 (Meter); Meter is ignored and will not work" in caplog.text
+        " A5-12-01 (Meter); Meter is decoded as D2-01-12 instead" in caplog.text
     )
     mock_gateway.send_esp3_packet.assert_awaited_once()
     assert hass.states.get(ENTITY_ID).state == STATE_ON
     assert hass.states.get(POWER_ENTITY_ID).state == STATE_UNKNOWN
+
+
+@pytest.mark.usefixtures("init_integration")
+@pytest.mark.parametrize(
+    "blocks",
+    [
+        pytest.param([FIRST_CHANNEL_CONFIG, SWITCH_CONFIG], id="first_channel_first"),
+        pytest.param([SWITCH_CONFIG, FIRST_CHANNEL_CONFIG], id="second_channel_first"),
+    ],
+)
+async def test_two_channels_of_one_actuator(
+    hass: HomeAssistant,
+    mock_gateway: Gateway,
+    caplog: pytest.LogCaptureFixture,
+    blocks: list[ConfigType],
+) -> None:
+    """Test a block per channel shares the two-channel profile whatever the block order."""
+    await async_setup_yaml_platform(hass, Platform.SWITCH, *blocks)
+
+    await async_receive_packet(
+        hass,
+        mock_gateway,
+        erp1_packet(RORG_VLD, actuator_status_response(CHANNEL, 0x64), SWITCH_ID),
+    )
+    await hass.services.async_call(
+        SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert "is configured as" not in caplog.text
+    assert hass.states.get(ENTITY_ID).state == STATE_ON
+    assert hass.states.get(FIRST_CHANNEL_ENTITY_ID).state == STATE_OFF
+    mock_gateway.send_esp3_packet.assert_awaited_once_with(
+        sent_packet(
+            RORG_VLD, [0x01, CHANNEL, 0x64], BASE_ID.bytelist, destination=SWITCH_ID
+        )
+    )
 
 
 @pytest.mark.usefixtures("init_integration")

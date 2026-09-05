@@ -22,6 +22,9 @@ class EnOceanDevice:
     sender: SenderAddress | None = None
     # Set by platforms that send commands, which need the device's own profile
     controllable: bool = False
+    # Precedence among blocks of one profile family: a block that pins the profile
+    # down (a channel, a temperature scale) outranks one assuming the family default
+    rank: int = 0
 
 
 # The library keeps no device registry, so every gateway that starts gets these
@@ -68,32 +71,42 @@ def async_add_device(hass: HomeAssistant, device: EnOceanDevice) -> None:
     devices = hass.data.setdefault(DATA_DEVICES, {})
     entries = hass.config_entries.async_loaded_entries(DOMAIN)
     if (known := devices.get(device.address)) is not None:
-        known_eep = known.device_type.eep
-        eep = device.device_type.eep
-        if (known_eep.rorg, known_eep.func) == (eep.rorg, eep.func):
+        if known.device_type.eep == device.device_type.eep:
             return
-        # Whichever platform sets up first, keep the profile that controls the device
-        if device.controllable and not known.controllable:
-            kept, dropped = device, known
-        else:
-            kept, dropped = known, device
-        LOGGER.error(
-            "EnOcean device %s is configured as %s (%s) and as %s (%s);"
-            " %s is ignored and will not work",
-            device.address,
-            kept.device_type.eep,
-            kept.name,
-            dropped.device_type.eep,
-            dropped.name,
-            dropped.name,
-        )
-        if kept is known:
+        if _keep_known_device(known, device):
             return
         for entry in entries:
             entry.runtime_data.remove_device(device.address)
     devices[device.address] = device
     for entry in entries:
         _register_device(entry.runtime_data, device)
+
+
+def _keep_known_device(known: EnOceanDevice, device: EnOceanDevice) -> bool:
+    """Return whether the profile of an earlier block stays in use for the address."""
+    known_eep = known.device_type.eep
+    eep = device.device_type.eep
+    same_family = (known_eep.rorg, known_eep.func) == (eep.rorg, eep.func)
+    # Whichever platform sets up first, keep the profile that controls the device
+    if same_family:
+        new_wins = (device.controllable, device.rank) > (known.controllable, known.rank)
+    else:
+        new_wins = device.controllable and not known.controllable
+    kept, dropped = (device, known) if new_wins else (known, device)
+    # Within a family, a block pinning the profile down refines the other block
+    if not same_family or kept.rank == dropped.rank:
+        LOGGER.error(
+            "EnOcean device %s is configured as %s (%s) and as %s (%s);"
+            " %s is decoded as %s instead",
+            device.address,
+            kept.device_type.eep,
+            kept.name,
+            dropped.device_type.eep,
+            dropped.name,
+            dropped.name,
+            kept.device_type.eep,
+        )
+    return kept is known
 
 
 def register_devices(hass: HomeAssistant, gateway: Gateway) -> None:

@@ -163,33 +163,78 @@ async def test_humidity(
 
 
 @pytest.mark.usefixtures("init_integration")
+@pytest.mark.parametrize(
+    ("temperature_scale", "raw", "expected"),
+    [
+        pytest.param({}, 125, "20.0", id="a5_04_01"),
+        pytest.param({"min_temp": -20, "max_temp": 60}, 0, "-20.0", id="a5_04_02"),
+    ],
+)
+@pytest.mark.parametrize(
+    "humidity_first",
+    [
+        pytest.param(False, id="temperature_first"),
+        pytest.param(True, id="humidity_first"),
+    ],
+)
 async def test_temperature_and_humidity_of_one_device(
-    hass: HomeAssistant, mock_gateway: Gateway, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant,
+    mock_gateway: Gateway,
+    caplog: pytest.LogCaptureFixture,
+    temperature_scale: ConfigType,
+    raw: int,
+    expected: str,
+    humidity_first: bool,
 ) -> None:
-    """Test a temperature and a humidity sensor share the device profile."""
+    """Test both sensors use the profile of the temperature scale whatever the block order."""
+    temperature_config = {
+        **TEMPERATURE_CONFIG,
+        **TEMPERATURE_HUMIDITY_SCALE,
+        **temperature_scale,
+    }
+    blocks = [temperature_config, HUMIDITY_CONFIG]
     await async_setup_yaml_platform(
-        hass,
-        Platform.SENSOR,
-        {**TEMPERATURE_CONFIG, **TEMPERATURE_HUMIDITY_SCALE},
-        HUMIDITY_CONFIG,
+        hass, Platform.SENSOR, *(reversed(blocks) if humidity_first else blocks)
     )
 
     await async_receive_packet(
-        hass, mock_gateway, erp1_packet(RORG_4BS, [0x00, 125, 125, 0x08], SENSOR_ID)
+        hass, mock_gateway, erp1_packet(RORG_4BS, [0x00, 125, raw, 0x08], SENSOR_ID)
     )
 
-    assert "is ignored" not in caplog.text
-    assert hass.states.get(TEMPERATURE_ENTITY_ID).state == "20.0"
+    assert "is configured as" not in caplog.text
+    assert hass.states.get(TEMPERATURE_ENTITY_ID).state == expected
     assert hass.states.get(HUMIDITY_ENTITY_ID).state == "50.0"
 
 
 @pytest.mark.usefixtures("init_integration")
+@pytest.mark.parametrize(
+    ("second_config", "message", "states"),
+    [
+        pytest.param(
+            {**HUMIDITY_CONFIG, "name": "Bath"},
+            "A5-04-01 (Bath); Bath is decoded as A5-02-05 instead",
+            {TEMPERATURE_ENTITY_ID: "40.0", "sensor.humidity_bath": STATE_UNKNOWN},
+            id="other_family",
+        ),
+        pytest.param(
+            {**TEMPERATURE_CONFIG, "name": "Bath", "min_temp": -40, "max_temp": 0},
+            "A5-02-01 (Bath); Bath is decoded as A5-02-05 instead",
+            {TEMPERATURE_ENTITY_ID: "40.0"},
+            id="other_scale",
+        ),
+    ],
+)
 async def test_conflicting_profiles_keep_the_first(
-    hass: HomeAssistant, mock_gateway: Gateway, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant,
+    mock_gateway: Gateway,
+    caplog: pytest.LogCaptureFixture,
+    second_config: ConfigType,
+    message: str,
+    states: dict[str, str],
 ) -> None:
     """Test a second block with an incompatible profile for a device is reported."""
     await async_setup_yaml_platform(
-        hass, Platform.SENSOR, TEMPERATURE_CONFIG, {**HUMIDITY_CONFIG, "name": "Bath"}
+        hass, Platform.SENSOR, TEMPERATURE_CONFIG, second_config
     )
 
     await async_receive_packet(
@@ -197,11 +242,13 @@ async def test_conflicting_profiles_keep_the_first(
     )
 
     assert (
-        "EnOcean device 01:02:03:04 is configured as A5-02-05 (Room) and as"
-        " A5-04-01 (Bath); Bath is ignored and will not work" in caplog.text
+        f"EnOcean device 01:02:03:04 is configured as A5-02-05 (Room) and as {message}"
+        in caplog.text
     )
-    assert hass.states.get(TEMPERATURE_ENTITY_ID).state == "40.0"
-    assert hass.states.get("sensor.humidity_bath").state == STATE_UNKNOWN
+    assert {
+        entity_id: hass.states.get(entity_id).state
+        for entity_id in hass.states.async_entity_ids(SENSOR_DOMAIN)
+    } == states
 
 
 @pytest.mark.usefixtures("init_integration")

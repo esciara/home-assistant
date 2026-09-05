@@ -22,6 +22,12 @@ HUMIDITY_CONFIG = {"id": SENSOR_ID, "name": "Room", "device_class": "humidity"}
 POWER_CONFIG = {"id": SENSOR_ID, "name": "Room"}
 WINDOW_HANDLE_CONFIG = {"id": SENSOR_ID, "name": "Room", "device_class": "windowhandle"}
 TEMPERATURE_HUMIDITY_SCALE = {"range_from": 0, "range_to": 250}
+TEMPERATURE_A5_04_01_CONFIG = {**TEMPERATURE_CONFIG, **TEMPERATURE_HUMIDITY_SCALE}
+TEMPERATURE_A5_04_02_CONFIG = {
+    **TEMPERATURE_A5_04_01_CONFIG,
+    "min_temp": -20,
+    "max_temp": 60,
+}
 
 TEMPERATURE_ENTITY_ID = "sensor.temperature_room"
 HUMIDITY_ENTITY_ID = "sensor.humidity_room"
@@ -164,38 +170,44 @@ async def test_humidity(
 
 @pytest.mark.usefixtures("init_integration")
 @pytest.mark.parametrize(
-    ("temperature_scale", "raw", "expected"),
+    ("blocks", "raw", "expected"),
     [
-        pytest.param({}, 125, "20.0", id="a5_04_01"),
-        pytest.param({"min_temp": -20, "max_temp": 60}, 0, "-20.0", id="a5_04_02"),
-    ],
-)
-@pytest.mark.parametrize(
-    "humidity_first",
-    [
-        pytest.param(False, id="temperature_first"),
-        pytest.param(True, id="humidity_first"),
+        pytest.param(
+            [TEMPERATURE_A5_04_01_CONFIG, HUMIDITY_CONFIG],
+            125,
+            "20.0",
+            id="a5_04_01_temperature_first",
+        ),
+        pytest.param(
+            [HUMIDITY_CONFIG, TEMPERATURE_A5_04_01_CONFIG],
+            125,
+            "20.0",
+            id="a5_04_01_humidity_first",
+        ),
+        pytest.param(
+            [TEMPERATURE_A5_04_02_CONFIG, HUMIDITY_CONFIG],
+            0,
+            "-20.0",
+            id="a5_04_02_temperature_first",
+        ),
+        pytest.param(
+            [HUMIDITY_CONFIG, TEMPERATURE_A5_04_02_CONFIG],
+            0,
+            "-20.0",
+            id="a5_04_02_humidity_first",
+        ),
     ],
 )
 async def test_temperature_and_humidity_of_one_device(
     hass: HomeAssistant,
     mock_gateway: Gateway,
     caplog: pytest.LogCaptureFixture,
-    temperature_scale: ConfigType,
+    blocks: list[ConfigType],
     raw: int,
     expected: str,
-    humidity_first: bool,
 ) -> None:
     """Test both sensors use the profile of the temperature scale whatever the block order."""
-    temperature_config = {
-        **TEMPERATURE_CONFIG,
-        **TEMPERATURE_HUMIDITY_SCALE,
-        **temperature_scale,
-    }
-    blocks = [temperature_config, HUMIDITY_CONFIG]
-    await async_setup_yaml_platform(
-        hass, Platform.SENSOR, *(reversed(blocks) if humidity_first else blocks)
-    )
+    await async_setup_yaml_platform(hass, Platform.SENSOR, *blocks)
 
     await async_receive_packet(
         hass, mock_gateway, erp1_packet(RORG_4BS, [0x00, 125, raw, 0x08], SENSOR_ID)

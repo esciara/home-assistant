@@ -9,7 +9,7 @@ from enocean_async import (
     Observation,
     ObservationSource,
 )
-from enocean_async.semantics.observers.button import HELD, PRESSED
+from enocean_async.semantics.observers.button import CLICKED, HELD, PRESSED, RELEASED
 import voluptuous as vol
 
 from homeassistant.components.binary_sensor import (
@@ -99,8 +99,10 @@ class EnOceanBinarySensor(EnOceanEntity, BinarySensorEntity):
         event: str = observation.values[Observable.BUTTON_EVENT]
         if event in (PRESSED, HELD):
             self._pressed.add(observation.entity)
-        else:
+        elif event in (CLICKED, RELEASED):
             self._pressed.discard(observation.entity)
+        else:
+            return
         self._attr_is_on = bool(self._pressed)
         self.async_write_ha_state()
 

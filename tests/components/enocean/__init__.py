@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Sequence
+from datetime import timedelta
 
 from enocean_async import BaseAddress, Gateway
 from enocean_async.protocol.esp3.packet import ESP3Packet, ESP3PacketType
@@ -11,6 +12,9 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
+
+from tests.common import async_fire_time_changed
 
 BASE_ID = BaseAddress("FF:9A:88:00")
 BROADCAST = (0xFF, 0xFF, 0xFF, 0xFF)
@@ -49,6 +53,16 @@ async def async_receive_packet(
 ) -> None:
     """Feed a packet to the gateway as if the dongle had received it."""
     gateway.process_esp3_packet(packet)
+    await _async_deliver_observations(hass)
+
+
+async def async_advance_time(hass: HomeAssistant, delta: timedelta) -> None:
+    """Run the timers of the gateway that are due within a delay."""
+    async_fire_time_changed(hass, dt_util.utcnow() + delta)
+    await _async_deliver_observations(hass)
+
+
+async def _async_deliver_observations(hass: HomeAssistant) -> None:
     # The gateway hands observations over through two rounds of call_soon
     for _ in range(3):
         await asyncio.sleep(0)

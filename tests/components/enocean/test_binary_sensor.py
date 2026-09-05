@@ -1,5 +1,7 @@
 """Tests for the EnOcean binary sensor platform."""
 
+from datetime import timedelta
+
 from enocean_async import Gateway
 import pytest
 from syrupy.assertion import SnapshotAssertion
@@ -9,7 +11,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from . import async_receive_packet, async_setup_yaml_platform, erp1_packet
+from . import (
+    async_advance_time,
+    async_receive_packet,
+    async_setup_yaml_platform,
+    erp1_packet,
+)
 
 from tests.common import async_capture_events
 
@@ -104,6 +111,51 @@ async def test_state_follows_the_button(
         hass, mock_gateway, erp1_packet(RORG_RPS, [0x00], ROCKER_ID, STATUS_RELEASED)
     )
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_buttons_held(hass: HomeAssistant, mock_gateway: Gateway) -> None:
+    """Test a hold keeps the sensor on and its release fires one event per button."""
+    await async_setup_yaml_platform(hass, Platform.BINARY_SENSOR, ROCKER_CONFIG)
+    events = async_capture_events(hass, EVENT_BUTTON_PRESSED)
+
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_RPS, [0x37], ROCKER_ID, STATUS_PRESSED)
+    )
+    await async_advance_time(hass, timedelta(seconds=1))
+
+    assert hass.states.get(ENTITY_ID).state == STATE_ON
+    assert [event.data for event in events] == [
+        button_event(1, 1, 0),
+        button_event(1, 0, 0),
+    ]
+
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_RPS, [0x00], ROCKER_ID, STATUS_RELEASED)
+    )
+
+    assert hass.states.get(ENTITY_ID).state == STATE_OFF
+    assert [event.data for event in events] == [
+        button_event(1, 1, 0),
+        button_event(1, 0, 0),
+        button_event(0, 1, 0),
+        button_event(0, 0, 0),
+    ]
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_release_timeout(hass: HomeAssistant, mock_gateway: Gateway) -> None:
+    """Test a press whose release telegram got lost times out without an event."""
+    await async_setup_yaml_platform(hass, Platform.BINARY_SENSOR, ROCKER_CONFIG)
+    events = async_capture_events(hass, EVENT_BUTTON_PRESSED)
+
+    await async_receive_packet(
+        hass, mock_gateway, erp1_packet(RORG_RPS, [0x30], ROCKER_ID, STATUS_PRESSED)
+    )
+    await async_advance_time(hass, timedelta(seconds=31))
+
+    assert hass.states.get(ENTITY_ID).state == STATE_OFF
+    assert [event.data for event in events] == [button_event(1, 1, 0)]
 
 
 @pytest.mark.usefixtures("init_integration")

@@ -31,7 +31,7 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType, StateTyp
 
 from .const import LOGGER
 from .entity import EnOceanEntity, combine_hex
-from .helpers import EnOceanDevice, async_add_device, validate_device_id
+from .helpers import EnOceanDevice, async_add_device, device_address
 
 CONF_MAX_TEMP = "max_temp"
 CONF_MIN_TEMP = "min_temp"
@@ -169,7 +169,7 @@ SENSOR_DESCRIPTIONS = {
 PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_ID): vol.All(
-            cv.ensure_list, [vol.Coerce(int)], validate_device_id
+            cv.ensure_list, [vol.Coerce(int)], device_address
         ),
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
         vol.Optional(CONF_DEVICE_CLASS, default=SENSOR_TYPE_POWER): cv.string,
@@ -195,7 +195,7 @@ async def async_setup_platform(
         LOGGER.warning("Unknown sensor type %s of %s", sensor_type, dev_name)
         return
 
-    address = EURID(config[CONF_ID])
+    address: EURID = config[CONF_ID]
     async_add_device(
         hass,
         EnOceanDevice(

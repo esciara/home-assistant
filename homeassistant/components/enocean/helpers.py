@@ -31,30 +31,20 @@ class EnOceanDevice:
 DATA_DEVICES: HassKey[dict[EURID, EnOceanDevice]] = HassKey(f"{DOMAIN}_devices")
 
 
-def validate_device_id(value: list[int]) -> list[int]:
+def device_address(value: list[int]) -> EURID:
     """Validate a list of bytes as an EnOcean device address."""
     try:
-        EURID(value)
+        return EURID(value)
     except ValueError as err:
         raise vol.Invalid(str(err)) from err
-    return value
 
 
 def sender_address(value: list[int]) -> SenderAddress:
-    """Return the base address or device address represented by a list of bytes."""
+    """Validate a list of bytes as an address a telegram can be sent from."""
     try:
         return BaseAddress(value)
     except ValueError:
-        return EURID(value)
-
-
-def validate_sender_id(value: list[int]) -> list[int]:
-    """Validate a list of bytes as an address a telegram can be sent from."""
-    try:
-        sender_address(value)
-    except ValueError as err:
-        raise vol.Invalid(str(err)) from err
-    return value
+        return device_address(value)
 
 
 @callback

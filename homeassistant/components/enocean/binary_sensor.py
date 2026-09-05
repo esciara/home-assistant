@@ -25,7 +25,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .entity import EnOceanEntity, combine_hex
-from .helpers import EnOceanDevice, async_add_device, validate_device_id
+from .helpers import EnOceanDevice, async_add_device, device_address
 
 DEFAULT_NAME = "EnOcean binary sensor"
 DEPENDENCIES = ["enocean"]
@@ -38,7 +38,7 @@ BUTTONS = {"b0": (0, 0), "b1": (0, 1), "a0": (1, 0), "a1": (1, 1)}
 PLATFORM_SCHEMA = BINARY_SENSOR_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_ID): vol.All(
-            cv.ensure_list, [vol.Coerce(int)], validate_device_id
+            cv.ensure_list, [vol.Coerce(int)], device_address
         ),
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
         vol.Optional(CONF_DEVICE_CLASS): DEVICE_CLASSES_SCHEMA,
@@ -56,7 +56,7 @@ async def async_setup_platform(
     dev_name: str = config[CONF_NAME]
     device_class: BinarySensorDeviceClass | None = config.get(CONF_DEVICE_CLASS)
 
-    address = EURID(config[CONF_ID])
+    address: EURID = config[CONF_ID]
     async_add_device(
         hass,
         EnOceanDevice(

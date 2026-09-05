@@ -17,7 +17,7 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .const import DOMAIN, LOGGER
 from .entity import EnOceanEntity, combine_hex
-from .helpers import EnOceanDevice, async_add_device, validate_device_id
+from .helpers import EnOceanDevice, async_add_device, device_address
 
 CONF_CHANNEL = "channel"
 DEFAULT_NAME = "EnOcean Switch"
@@ -28,7 +28,7 @@ DEVICE_TYPE_ID_TWO_CHANNELS = "EEP/D2-01-12"
 PLATFORM_SCHEMA = SWITCH_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_ID): vol.All(
-            cv.ensure_list, [vol.Coerce(int)], validate_device_id
+            cv.ensure_list, [vol.Coerce(int)], device_address
         ),
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
         vol.Optional(CONF_CHANNEL, default=0): cv.positive_int,
@@ -76,11 +76,10 @@ async def async_setup_platform(
 ) -> None:
     """Set up the EnOcean switch platform."""
     channel: int = config[CONF_CHANNEL]
-    dev_id: list[int] = config[CONF_ID]
+    address: EURID = config[CONF_ID]
     dev_name: str = config[CONF_NAME]
 
-    _migrate_to_new_unique_id(hass, dev_id, channel)
-    address = EURID(dev_id)
+    _migrate_to_new_unique_id(hass, address.bytelist, channel)
     device_type_id = (
         DEVICE_TYPE_ID_TWO_CHANNELS if channel else DEVICE_TYPE_ID_SINGLE_CHANNEL
     )

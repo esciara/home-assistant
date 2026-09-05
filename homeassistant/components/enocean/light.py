@@ -26,13 +26,7 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util.color import brightness_to_value, value_to_brightness
 
 from .entity import EnOceanEntity, combine_hex
-from .helpers import (
-    EnOceanDevice,
-    async_add_device,
-    sender_address,
-    validate_device_id,
-    validate_sender_id,
-)
+from .helpers import EnOceanDevice, async_add_device, device_address, sender_address
 
 CONF_SENDER_ID = "sender_id"
 
@@ -44,10 +38,10 @@ BRIGHTNESS_SCALE = (1, 100)
 PLATFORM_SCHEMA = LIGHT_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_ID): vol.All(
-            cv.ensure_list, [vol.Coerce(int)], validate_device_id
+            cv.ensure_list, [vol.Coerce(int)], device_address
         ),
         vol.Required(CONF_SENDER_ID): vol.All(
-            cv.ensure_list, [vol.Coerce(int)], validate_sender_id
+            cv.ensure_list, [vol.Coerce(int)], sender_address
         ),
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
     }
@@ -62,14 +56,14 @@ async def async_setup_platform(
 ) -> None:
     """Set up the EnOcean light platform."""
     dev_name: str = config[CONF_NAME]
-    address = EURID(config[CONF_ID])
+    address: EURID = config[CONF_ID]
     async_add_device(
         hass,
         EnOceanDevice(
             address=address,
             device_type=DEVICE_TYPES[DEVICE_TYPE_ID],
             name=dev_name,
-            sender=sender_address(config[CONF_SENDER_ID]),
+            sender=config[CONF_SENDER_ID],
             controllable=True,
         ),
     )
